@@ -7,7 +7,38 @@
     "name": "HJD",
     "url": "https://github.com/hjdhjd"
   },
+  "homepage": "https://github.com/hjdhjd/prismcast",
   "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/hjdhjd/prismcast/issues"
+  },
+  "keywords": [
+    "browser-capture",
+    "channels",
+    "channels-dvr",
+    "chrome",
+    "chrome-capture",
+    "cord-cutting",
+    "dvr",
+    "ffmpeg",
+    "fmp4",
+    "hls",
+    "iptv",
+    "live-streaming",
+    "live-tv",
+    "m3u",
+    "m3u8",
+    "media-server",
+    "ott",
+    "puppeteer",
+    "screen-capture",
+    "streaming",
+    "streaming-server",
+    "tv",
+    "video",
+    "video-capture",
+    "video-streaming"
+  ],
   "engines": {
     "node": ">=22"
   },
