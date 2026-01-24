@@ -60,7 +60,7 @@ The name reflects what the project does: like a prism transforming light into a 
 - **Gracenote integration** - Channels can include station IDs for automatic guide data matching in Channels DVR.
 - **Modern codebase** - Clean TypeScript with ESM modules, full type safety, and comprehensive documentation.
 
-## Why PrismCast?
+## Why Choose PrismCast?
 
 If you're already using Chrome Capture for Channels and it's working well for you, that's wonderful! There's no need to switch. However, if you're looking for something different, PrismCast offers a modern TypeScript codebase, a real-time web interface, intelligent recovery, and the flexibility to easily add your own channels. The site profile system makes it straightforward to add support for new streaming sites, and contributions are always welcome!
 
