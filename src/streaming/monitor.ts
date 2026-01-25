@@ -800,6 +800,10 @@ export function monitorPlaybackHealth(
 
   /*
    * Main monitoring interval. This runs every MONITOR_INTERVAL milliseconds to check video state and trigger recovery when needed.
+   *
+   * IMPORTANT: Early returns must call emitStatusUpdate() before returning (except when the stream is terminating, e.g., page closed or circuit breaker tripped). This
+   * ensures SSE clients always have current status data (duration, memory, health) even during recovery, buffering, or video search periods. Without this, the
+   * streamStatuses map becomes stale and new SSE connections receive outdated snapshots.
    */
   const interval = setInterval((): void => {
 
@@ -811,8 +815,11 @@ export function monitorPlaybackHealth(
       return;
     }
 
-    // Skip this check if a recovery operation is still in progress. Recovery can be async and take multiple seconds. We don't want to stack recovery attempts.
+    // Skip this check if a recovery operation is still in progress. Recovery can be async and take multiple seconds. We don't want to stack recovery attempts. We still
+    // emit status so SSE clients see current state (health, duration, memory) even during recovery.
     if(recoveryInProgress) {
+
+      emitStatusUpdate();
 
       return;
     }
@@ -924,6 +931,9 @@ export function monitorPlaybackHealth(
             // Reset video not found counter since video actually exists.
             videoNotFoundCount = 0;
 
+            // Emit status so SSE clients see current state even during this buffering condition.
+            emitStatusUpdate();
+
             // Let the normal buffering detection handle this on subsequent checks.
             return;
           }
@@ -936,7 +946,9 @@ export function monitorPlaybackHealth(
           // Grace period: Wait for 2 consecutive failures before attempting context re-search, 3 before full navigation.
           if(videoNotFoundCount < 2) {
 
-            // First failure - just log and wait for next check.
+            // First failure - just log and wait for next check. Emit status so SSE clients stay current.
+            emitStatusUpdate();
+
             return;
           }
 
@@ -957,6 +969,9 @@ export function monitorPlaybackHealth(
                 currentContext = newContext;
                 videoNotFoundCount = 0;
 
+                // Emit status so SSE clients see current state.
+                emitStatusUpdate();
+
                 return;
               }
 
@@ -965,6 +980,9 @@ export function monitorPlaybackHealth(
 
               LOG.warn("Frame re-search failed: %s.", formatError(error));
             }
+
+            // Emit status so SSE clients stay current during video search.
+            emitStatusUpdate();
 
             return;
           }
@@ -1044,6 +1062,9 @@ export function monitorPlaybackHealth(
           }
 
           recoveryInProgress = false;
+
+          // Emit status so SSE clients see the recovery result.
+          emitStatusUpdate();
 
           return;
         }

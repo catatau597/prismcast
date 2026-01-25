@@ -233,15 +233,17 @@ function generateStatusScript(): string {
     "  renderStreamsTable();",
     "}",
 
-    // Update stream durations every second.
+    // Update stream durations every second. We calculate duration from the immutable startTime rather than incrementing a counter, ensuring the displayed duration is
+    // always accurate regardless of any staleness in server-sent updates.
     "function updateDurations() {",
+    "  var now = Date.now();",
     "  var streamIds = Object.keys(streamData);",
     "  for (var i = 0; i < streamIds.length; i++) {",
     "    var id = streamIds[i];",
     "    var s = streamData[id];",
-    "    s.duration++;",
+    "    var durationSec = Math.floor((now - new Date(s.startTime).getTime()) / 1000);",
     "    var el = document.getElementById('duration-' + id);",
-    "    if (el) el.textContent = '\\u00b7 ' + formatDuration(s.duration);",
+    "    if (el) el.textContent = '\\u00b7 ' + formatDuration(durationSec);",
     "  }",
     "}",
 

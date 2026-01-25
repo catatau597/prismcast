@@ -152,20 +152,15 @@ export function emitStreamRemoved(streamId: number): void {
 }
 
 /**
- * Emits a stream health changed event when a stream's health status changes.
+ * Emits a stream health changed event with the current stream status. This function always stores and emits the status to ensure SSE clients and snapshots have
+ * current data. During healthy playback the monitor calls this every ~2 seconds anyway, so removing the previous selective filter has negligible bandwidth impact
+ * while eliminating staleness during recovery/buffering periods.
  * @param status - The updated stream status.
  */
 export function emitStreamHealthChanged(status: StreamStatus): void {
 
-  const existing = streamStatuses.get(status.id);
-
-  // Only emit if health classification or key metrics changed to reduce noise.
-  if(!existing || (existing.health !== status.health) || (existing.escalationLevel !== status.escalationLevel) ||
-     (existing.recoveryAttempts !== status.recoveryAttempts) || (Math.abs(existing.currentTime - status.currentTime) >= 1)) {
-
-    streamStatuses.set(status.id, status);
-    statusEmitter.emit("streamHealthChanged", status);
-  }
+  streamStatuses.set(status.id, status);
+  statusEmitter.emit("streamHealthChanged", status);
 }
 
 /**
