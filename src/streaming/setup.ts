@@ -967,14 +967,13 @@ async function setupM3u8Stream(options: M3u8StreamSetupOptions): Promise<StreamS
     requestHeaders
   } = options;
 
-  const ffmpegArgs = [
-    "-i", m3u8Url,
+  const inputOptions: string[] = [];
+  const outputOptions: string[] = [
     "-c:v", "copy",
     "-c:a", "aac",
     "-b:a", String(CONFIG.streaming.audioBitsPerSecond),
     "-f", "mp4",
-    "-movflags", "frag_keyframe+empty_moov+default_base_moof",
-    "-"
+    "-movflags", "frag_keyframe+empty_moov+default_base_moof"
   ];
 
   if(requestHeaders) {
@@ -987,21 +986,28 @@ async function setupM3u8Stream(options: M3u8StreamSetupOptions): Promise<StreamS
 
     if(headerLines) {
 
-      ffmpegArgs.unshift("-headers", headerLines + "\r\n");
+      inputOptions.push("-headers", headerLines + "\r\n");
 
       const userAgent = requestHeaders["user-agent"] ?? requestHeaders["User-Agent"];
 
       if(userAgent) {
 
-        ffmpegArgs.unshift("-user_agent", userAgent);
+        inputOptions.push("-user_agent", userAgent);
       }
     }
   }
 
   if(metadataComment) {
 
-    ffmpegArgs.unshift("-metadata", "comment=" + metadataComment);
+    outputOptions.push("-metadata", "comment=" + metadataComment);
   }
+
+  const ffmpegArgs = [
+    ...inputOptions,
+    "-i", m3u8Url,
+    ...outputOptions,
+    "-"
+  ];
 
   const ffmpegPath = await resolveFFmpegPath() ?? "ffmpeg";
   const process = spawn(ffmpegPath, ffmpegArgs, { stdio: [ "ignore", "pipe", "pipe" ] });
