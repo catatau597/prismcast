@@ -80,8 +80,15 @@ RUN wget -q -O /tmp/google-chrome.deb https://dl.google.com/linux/direct/google-
     && rm /tmp/google-chrome.deb \
     && rm -rf /var/lib/apt/lists/*
 
-# Install PrismCast globally from npm.
-RUN npm install -g prismcast
+# Install PrismCast from the local project to reflect repository changes.
+WORKDIR /usr/src/prismcast
+COPY package*.json ./
+COPY src ./src
+COPY bin ./bin
+COPY tsconfig.json ./
+COPY README.md ./
+COPY LICENSE.md ./
+RUN npm install -g .
 
 # Create a Chrome wrapper script that passes --no-sandbox for container environments. Chrome refuses to run as root without this flag.
 RUN echo '#!/bin/bash\nexec /usr/bin/google-chrome-stable --no-sandbox --disable-setuid-sandbox "$@"' > /usr/local/bin/chrome-no-sandbox \

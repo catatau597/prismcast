@@ -21,6 +21,7 @@ import { closeBrowser } from "../browser/index.js";
 import { getPresetOptionsWithDegradation } from "../config/presets.js";
 import { getProfiles } from "../config/profiles.js";
 import { getStreamCount } from "../streaming/registry.js";
+import { generateToggleScript, generateToggleSwitch } from "./ui.js";
 
 /* The /config endpoint provides a user-friendly web interface for editing PrismCast settings. Users can adjust values, see defaults, and understand what each
  * setting does without editing JSON files directly. Changes require a server restart to take effect.
@@ -395,7 +396,8 @@ function generateProfileReference(profiles: ProfileInfo[]): string {
  * @param showHints - Whether to show hint text.
  * @returns Array of HTML strings for the advanced fields section.
  */
-function generateAdvancedFields(idPrefix: string, stationIdValue: string, channelSelectorValue: string, channelNumberValue: string, showHints = true): string[] {
+function generateAdvancedFields(idPrefix: string, stationIdValue: string, channelSelectorValue: string, channelNumberValue: string,
+  useM3u8LinkValue = false, showHints = true): string[] {
 
   const lines: string[] = [];
 
@@ -405,6 +407,14 @@ function generateAdvancedFields(idPrefix: string, stationIdValue: string, channe
     "'Hide Advanced Options' : 'Show Advanced Options';\">Show Advanced Options</div>");
 
   lines.push("<div id=\"" + idPrefix + "-advanced\" class=\"advanced-fields\">");
+
+  lines.push(generateToggleSwitch(
+    idPrefix + "-useM3u8Link",
+    useM3u8LinkValue,
+    "Use M3U8 Link",
+    "Capture M3U8 stream URL instead of screen recording (lower CPU usage, better quality)",
+    "useM3u8Link"
+  ));
 
   // Station ID.
   const stationIdHint = showHints ? "Optional Gracenote station ID for guide data (tvc-guide-stationid)." : undefined;
@@ -642,7 +652,7 @@ export function generateChannelRowHtml(key: string, profiles: ProfileInfo[]): Ch
 
     // Advanced fields.
     editLines.push(...generateAdvancedFields("edit-" + key, channel.stationId ?? "", channel.channelSelector ?? "",
-      channel.channelNumber ? String(channel.channelNumber) : ""));
+      channel.channelNumber ? String(channel.channelNumber) : "", channel.useM3u8Link ?? false));
 
     // Form buttons.
     editLines.push("<div class=\"form-buttons\">");
@@ -1495,7 +1505,7 @@ export function generateChannelsPanel(channelMessage?: string, channelError?: bo
 
   // Advanced fields (station ID, channel selector, channel number).
   lines.push(...generateAdvancedFields("add", formValues?.get("stationId") ?? "", formValues?.get("channelSelector") ?? "",
-    formValues?.get("channelNumber") ?? ""));
+    formValues?.get("channelNumber") ?? "", formValues?.get("useM3u8Link") === "true"));
 
   // Form buttons.
   lines.push("<div class=\"form-buttons\">");
@@ -1545,6 +1555,7 @@ export function generateChannelsPanel(channelMessage?: string, channelError?: bo
   // Embed channel selector data for datalist population. The client-side JavaScript uses this to offer known selector suggestions when the URL matches a
   // multi-channel site like Disney+ or USA Network.
   lines.push("<script>" + generateChannelSelectorData() + "</script>");
+  lines.push(generateToggleScript());
 
   return lines.join("\n");
 }
@@ -2379,6 +2390,8 @@ export function setupConfigEndpoint(app: Express): void {
       const stationId = body.stationId?.trim() ?? "";
       const channelSelector = body.channelSelector?.trim() ?? "";
       const channelNumberStr = body.channelNumber?.trim() ?? "";
+      const useM3u8LinkValue = body.useM3u8Link?.trim() ?? "false";
+      const useM3u8Link = useM3u8LinkValue === "true";
 
       // Validate channel number if provided.
       if(channelNumberStr) {
@@ -2491,6 +2504,8 @@ export function setupConfigEndpoint(app: Express): void {
 
         channel.channelNumber = parseInt(channelNumberStr, 10);
       }
+
+      channel.useM3u8Link = useM3u8Link;
 
       // Add or update the channel.
       result.channels[key as string] = channel;

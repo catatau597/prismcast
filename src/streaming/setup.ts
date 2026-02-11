@@ -2,14 +2,16 @@
  *
  * setup.ts: Common stream setup logic for PrismCast.
  */
-import type { Channel, Nullable, ResolvedSiteProfile, UrlValidation } from "../types/index.js";
+import type { Channel, M3u8StreamSetupOptions, Nullable, ResolvedSiteProfile, UrlValidation } from "../types/index.js";
 import type { Frame, Page } from "puppeteer-core";
-import { LOG, delay, extractDomain, formatError, registerAbortController, retryOperation, runWithStreamContext, spawnFFmpeg } from "../utils/index.js";
+import { LOG, delay, extractDomain, formatError, registerAbortController, resolveFFmpegPath, retryOperation, runWithStreamContext, spawnFFmpeg } from "../utils/index.js";
 import type { MonitorStreamInfo, RecoveryMetrics, TabReplacementResult } from "./monitor.js";
 import { closeBrowser, getCurrentBrowser, getStream, minimizeBrowserWindow, registerManagedPage, unregisterManagedPage } from "../browser/index.js";
 import { getNextStreamId, getStreamCount } from "./registry.js";
 import { getProfileForChannel, getProfileForUrl, getProfiles, resolveProfile } from "../config/profiles.js";
 import { initializePlayback, navigateToPage } from "../browser/video.js";
+import { captureM3u8FromNetwork } from "../browser/m3u8Capture.js";
+import type { M3u8CaptureResult } from "../browser/m3u8Capture.js";
 import { CONFIG } from "../config/index.js";
 import type { FFmpegProcess } from "../utils/index.js";
 import type { Readable } from "node:stream";
@@ -18,6 +20,7 @@ import { getProviderDisplayName } from "../config/providers.js";
 import { monitorPlaybackHealth } from "./monitor.js";
 import { pipeline } from "node:stream/promises";
 import { resizeAndMinimizeWindow } from "../browser/cdp.js";
+import { spawn } from "node:child_process";
 
 /* This module contains the common stream setup logic for HLS streaming. The core logic is split into two functions:
  *
@@ -106,6 +109,9 @@ export interface StreamSetupOptions {
 
   // The URL to stream. Required.
   url: string;
+
+  // Whether to capture M3U8 link instead of screen capture.
+  useM3u8Link?: boolean;
 }
 
 /**
@@ -654,7 +660,7 @@ async function resolveRedirectUrl(url: string): Promise<string | null> {
  */
 export async function setupStream(options: StreamSetupOptions, onCircuitBreak: () => void): Promise<StreamSetupResult> {
 
-  const { channel, channelName, channelSelector, clickSelector, clickToPlay, noVideo, onTabReplacementFactory, profileOverride, url } = options;
+  const { channel, channelName, channelSelector, clickSelector, clickToPlay, noVideo, onTabReplacementFactory, profileOverride, url, useM3u8Link } = options;
 
   // Generate stream identifiers early so all log messages include them.
   const streamId = generateStreamId(channelName, url);
@@ -770,6 +776,68 @@ export async function setupStream(options: StreamSetupOptions, onCircuitBreak: (
       );
     }
 
+    // Decide between M3U8 capture and screen capture.
+    const shouldCaptureM3u8 = useM3u8Link ?? channel?.useM3u8Link ?? false;
+
+    if(shouldCaptureM3u8) {
+
+      LOG.info("M3U8 capture mode enabled for %s", url);
+
+      const browser = await getCurrentBrowser();
+      const tempPage = await browser.newPage();
+
+      registerManagedPage(tempPage);
+
+      let m3u8Result: M3u8CaptureResult;
+
+      try {
+
+        m3u8Result = await captureM3u8FromNetwork({ page: tempPage, url, profile });
+
+        if(!m3u8Result.success) {
+
+          throw new StreamSetupError(
+            "M3U8 capture failed: " + (m3u8Result.reason ?? "Unknown error"),
+            503,
+            "Could not capture M3U8 link from " + extractDomain(url) + ". " + (m3u8Result.reason ?? "")
+          );
+        }
+
+        if(!m3u8Result.m3u8Url) {
+
+          throw new StreamSetupError(
+            "M3U8 capture returned without a URL.",
+            500,
+            "Captured M3U8 URL is missing."
+          );
+        }
+
+        LOG.info("M3U8 link captured successfully: %s", m3u8Result.m3u8Url);
+      } finally {
+
+        unregisterManagedPage(tempPage);
+
+        if(!tempPage.isClosed()) {
+
+          await tempPage.close().catch(() => {});
+        }
+      }
+
+      return setupM3u8Stream({
+        m3u8Url: m3u8Result.m3u8Url,
+        channelName: channel?.name ?? null,
+        metadataComment,
+        numericStreamId,
+        onCircuitBreak,
+        profile,
+        profileName,
+        providerName,
+        startTime,
+        streamId,
+        url
+      });
+    }
+
     // Create page and start capture using the shared function. This handles browser page creation, capture initialization, FFmpeg spawning, and navigation with retry.
     let captureResult: CreatePageWithCaptureResult;
 
@@ -879,4 +947,132 @@ export async function setupStream(options: StreamSetupOptions, onCircuitBreak: (
       url
     };
   });
+}
+
+async function setupM3u8Stream(options: M3u8StreamSetupOptions): Promise<StreamSetupResult> {
+
+  const {
+    m3u8Url,
+    channelName,
+    metadataComment,
+    numericStreamId,
+    onCircuitBreak,
+    profile,
+    profileName,
+    providerName,
+    startTime,
+    streamId,
+    url
+  } = options;
+
+  const ffmpegArgs = [
+    "-i", m3u8Url,
+    "-c:v", "copy",
+    "-c:a", "aac",
+    "-b:a", String(CONFIG.streaming.audioBitsPerSecond),
+    "-f", "mp4",
+    "-movflags", "frag_keyframe+empty_moov+default_base_moof",
+    "-"
+  ];
+
+  if(metadataComment) {
+
+    ffmpegArgs.unshift("-metadata", "comment=" + metadataComment);
+  }
+
+  const ffmpegPath = await resolveFFmpegPath() ?? "ffmpeg";
+  const process = spawn(ffmpegPath, ffmpegArgs, { stdio: [ "pipe", "pipe", "pipe" ] });
+
+  process.on("error", (error) => {
+
+    LOG.error("FFmpeg M3U8 process error: %s", formatError(error));
+    onCircuitBreak();
+  });
+
+  if(process.stderr) {
+
+    process.stderr.on("data", (data) => {
+
+      LOG.debug("FFmpeg M3U8: %s", data.toString().trim());
+    });
+  }
+
+  if(!process.stdout || !process.stdin) {
+
+    throw new StreamSetupError("FFmpeg output unavailable.", 500, "Failed to start FFmpeg for M3U8.");
+  }
+
+  const ffmpegProcess: FFmpegProcess = {
+    kill: () => {
+
+      if(!process.killed) {
+
+        process.kill("SIGTERM");
+      }
+    },
+    process,
+    stdin: process.stdin,
+    stdout: process.stdout
+  };
+
+  const captureStream = process.stdout;
+
+  const stopMonitor = () => ({
+    attemptCount: 0,
+    circuitBreakerTripped: false,
+    lastIssueTime: null,
+    lastIssueType: null,
+    pageReloadsInWindow: 0
+  });
+
+  let cleanupCompleted = false;
+
+  const cleanup = async (): Promise<void> => {
+
+    if(cleanupCompleted) {
+
+      return;
+    }
+
+    cleanupCompleted = true;
+
+    LOG.info("Cleaning up M3U8 stream %s", streamId);
+
+    stopMonitor();
+
+    if(!captureStream.destroyed) {
+
+      captureStream.destroy();
+    }
+
+    if(!process.killed) {
+
+      process.kill("SIGTERM");
+
+      setTimeout(() => {
+
+        if(!process.killed) {
+
+          process.kill("SIGKILL");
+        }
+      }, 2000);
+    }
+  };
+
+  return {
+    captureStream,
+    rawCaptureStream: captureStream,
+    channelName,
+    numericStreamId,
+    streamId,
+    url,
+    startTime,
+    profile,
+    profileName,
+    providerName,
+    ffmpegProcess,
+    stopMonitor,
+    cleanup,
+    page: null as unknown as Page
+  };
 }

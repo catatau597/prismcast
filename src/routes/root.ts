@@ -1729,6 +1729,7 @@ function generateConfigSubtabScript(): string {
     "      if (newEditRow) tbody.appendChild(newEditRow);",
     "    }",
     "    updateDisabledCount();",
+    "    if (window.initializeToggleSwitches) { window.initializeToggleSwitches(); }",
     "  };",
 
     // Remove channel rows from the table.

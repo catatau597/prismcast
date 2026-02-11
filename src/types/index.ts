@@ -500,6 +500,48 @@ export interface Channel {
   // URL of the streaming page to capture. This should be the direct URL to the live stream player, not a landing page or show page. Authentication cookies from
   // the Chrome profile are used, so the URL can be to authenticated content.
   url: string;
+
+  // When true, PrismCast attempts to capture the M3U8 link from network traffic instead of using screen capture.
+  useM3u8Link?: boolean;
+}
+
+/**
+ * Options for setting up an M3U8-based stream.
+ */
+export interface M3u8StreamSetupOptions {
+
+  // Captured M3U8 URL.
+  m3u8Url: string;
+
+  // Channel display name if streaming a named channel.
+  channelName: Nullable<string>;
+
+  // Comment to embed in FFmpeg output metadata.
+  metadataComment: string;
+
+  // Unique numeric ID for this stream.
+  numericStreamId: number;
+
+  // Callback invoked when the circuit breaker trips.
+  onCircuitBreak: () => void;
+
+  // The resolved site profile.
+  profile: ResolvedSiteProfile;
+
+  // The name of the resolved profile.
+  profileName: string;
+
+  // Friendly provider display name derived from the URL domain.
+  providerName: string;
+
+  // Timestamp when the stream started.
+  startTime: Date;
+
+  // Unique string ID for log correlation.
+  streamId: string;
+
+  // The URL being streamed.
+  url: string;
 }
 
 /**

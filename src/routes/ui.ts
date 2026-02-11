@@ -128,6 +128,18 @@ export function generateBaseStyles(): string {
     "background: var(--form-input-bg); color: var(--text-primary); font-size: 14px; cursor: pointer; }",
     ".form-checkbox { flex: none; width: 18px; height: 18px; cursor: pointer; accent-color: var(--interactive-primary); }",
 
+    // Toggle switch styles.
+    ".toggle-container { display: flex; align-items: center; gap: 12px; margin: 16px 0; padding: 12px; background: var(--bg-secondary); ",
+    "border-radius: 8px; }",
+    ".toggle-container label { font-weight: 500; color: var(--text-primary); margin: 0; flex: 1; }",
+    ".toggle-switch { position: relative; width: 44px; height: 24px; background: var(--border-color); border-radius: 12px; cursor: pointer; ",
+    "transition: background-color 0.3s; }",
+    ".toggle-switch.active { background: #2196f3; }",
+    ".toggle-switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 20px; height: 20px; background: white; border-radius: 50%; ",
+    "transition: transform 0.3s; }",
+    ".toggle-switch.active::after { transform: translateX(20px); }",
+    ".toggle-hint { font-size: 0.85em; color: var(--text-secondary); margin-top: 4px; }",
+
     // Focus states.
     ".form-input:focus, .form-select:focus { border-color: var(--interactive-primary); outline: none; box-shadow: 0 0 0 2px var(--border-focus); }",
 
@@ -353,6 +365,62 @@ export function generateTabScript(options: TabScriptOptions = {}): string {
     "  window.initialHashSubtab = parsed.subtab;",
 
     "})();",
+    "</script>"
+  ].join("\n");
+}
+
+export function generateToggleSwitch(name: string, checked = false, label: string, hint?: string, inputName?: string): string {
+
+  const resolvedInputName = inputName ?? name;
+
+  return [
+    "<div class=\"toggle-container\">",
+    "<div style=\"flex: 1;\">",
+    "<label for=\"toggle-" + name + "\">" + label + "</label>",
+    hint ? "<div class=\"toggle-hint\">" + hint + "</div>" : "",
+    "</div>",
+    "<div class=\"toggle-switch" + (checked ? " active" : "") + "\" id=\"toggle-" + name + "\" data-name=\"" + resolvedInputName +
+      "\" role=\"switch\" aria-checked=\"" + String(checked) + "\" tabindex=\"0\"></div>",
+    "<input type=\"hidden\" name=\"" + resolvedInputName + "\" value=\"" + (checked ? "true" : "false") + "\">",
+    "</div>"
+  ].join("\n");
+}
+
+export function generateToggleScript(): string {
+
+  return [
+    "<script>",
+    "  function bindToggleSwitch(toggle) {",
+    "    var hiddenInput = toggle.parentElement.querySelector('input[type=\"hidden\"]');",
+    "    if (!hiddenInput) return;",
+    "    var handleToggle = function() {",
+    "      var isActive = toggle.classList.toggle('active');",
+    "      toggle.setAttribute('aria-checked', String(isActive));",
+    "      hiddenInput.value = isActive ? 'true' : 'false';",
+    "    };",
+    "    toggle.addEventListener('click', handleToggle);",
+    "    toggle.addEventListener('keydown', function(e) {",
+    "      if (e.key === 'Enter' || e.key === ' ') {",
+    "        e.preventDefault();",
+    "        handleToggle();",
+    "      }",
+    "    });",
+    "  }",
+    "  function initializeToggleSwitches() {",
+    "    document.querySelectorAll('.toggle-switch').forEach(function(toggle) {",
+    "      if (!toggle.dataset.bound) {",
+    "        toggle.dataset.bound = 'true';",
+    "        bindToggleSwitch(toggle);",
+    "      }",
+    "    });",
+    "  }",
+    "  document.addEventListener('click', function(e) {",
+    "    if (e.target && e.target.classList && e.target.classList.contains('toggle-switch')) {",
+    "      return;",
+    "    }",
+    "  });",
+    "  initializeToggleSwitches();",
+    "  window.initializeToggleSwitches = initializeToggleSwitches;",
     "</script>"
   ].join("\n");
 }
