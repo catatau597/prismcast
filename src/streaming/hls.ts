@@ -2,26 +2,27 @@
  *
  * hls.ts: HLS streaming request handlers for PrismCast.
  */
+import type { Request, Response } from "express";
+import { createHash } from "node:crypto";
+import { Readable } from "node:stream";
+import { emitCurrentSystemStatus, isLoginModeActive, unregisterManagedPage } from "../browser/index.js";
+import { CONFIG } from "../config/index.js";
+import { getResolvedChannel, resolveProviderKey } from "../config/providers.js";
+import { getAllChannels, isPredefinedChannelDisabled } from "../config/userChannels.js";
 import type { Channel, Nullable, ResolvedSiteProfile } from "../types/index.js";
 import { LOG, delay, formatError, runWithStreamContext } from "../utils/index.js";
-import type { Request, Response } from "express";
-import { StreamSetupError, createPageWithCapture, setupStream } from "./setup.js";
-import { createHLSState, getAllStreams, getStream, getStreamCount, registerStream, updateLastAccess } from "./registry.js";
-import { createInitialStreamStatus, emitStreamAdded } from "./statusEmitter.js";
-import { deleteChannelStreamId, getChannelStreamId, isTerminationInitiated, setChannelStreamId, terminateStream } from "./lifecycle.js";
-import { emitCurrentSystemStatus, isLoginModeActive, unregisterManagedPage } from "../browser/index.js";
-import { getAllChannels, isPredefinedChannelDisabled } from "../config/userChannels.js";
+import { registerClient } from "./clients.js";
+import { createFMP4Segmenter } from "./fmp4Segmenter.js";
 import { getInitSegment, getPlaylist, getSegment, waitForPlaylist } from "./hlsSegments.js";
-import { getResolvedChannel, resolveProviderKey } from "../config/providers.js";
-import { CONFIG } from "../config/index.js";
 import type { FMP4SegmenterResult } from "./fmp4Segmenter.js";
-import type { StreamRegistryEntry } from "./registry.js";
+import { deleteChannelStreamId, getChannelStreamId, isTerminationInitiated, setChannelStreamId, terminateStream } from "./lifecycle.js";
 import type { TabReplacementHandlerFactory } from "./setup.js";
 import type { TabReplacementResult } from "./monitor.js";
-import { createFMP4Segmenter } from "./fmp4Segmenter.js";
-import { createHash } from "node:crypto";
-import { registerClient } from "./clients.js";
+import type { StreamRegistryEntry } from "./registry.js";
+import { createHLSState, getAllStreams, getStream, getStreamCount, registerStream, updateLastAccess } from "./registry.js";
+import { StreamSetupError, createPageWithCapture, setupStream } from "./setup.js";
 import { triggerShowNameUpdate } from "./showInfo.js";
+import { createInitialStreamStatus, emitStreamAdded } from "./statusEmitter.js";
 
 /* This module handles HLS (HTTP Live Streaming) output using fMP4 (fragmented MP4) segments. HLS mode uses MP4/AAC capture from puppeteer-stream, which is then
  * segmented natively without any external dependencies. The overall flow is:
@@ -161,8 +162,23 @@ export async function handleHLSPlaylist(req: Request, res: Response): Promise<vo
     return;
   }
 
+  const stream = getStream(streamId);
+
   // Capture client address for client tracking.
   const clientAddress = req.ip ?? req.socket.remoteAddress ?? "unknown";
+
+  if(stream?.m3u8Proxy) {
+
+    const proxied = await proxyM3u8Request({ channelName, req, res, stream, url: stream.m3u8Proxy.url });
+
+    if(proxied) {
+
+      updateLastAccess(streamId);
+      registerClient(streamId, clientAddress, "hls");
+    }
+
+    return;
+  }
 
   // If a playlist is already available, return it immediately.
   const existingPlaylist = getPlaylist(streamId);
@@ -215,7 +231,7 @@ export async function handleHLSPlaylist(req: Request, res: Response): Promise<vo
  * @param req - Express request object.
  * @param res - Express response object.
  */
-export function handleHLSSegment(req: Request, res: Response): void {
+export async function handleHLSSegment(req: Request, res: Response): Promise<void> {
 
   const channelName = (req.params as { name?: string }).name;
   const segmentName = (req.params as { segment?: string }).segment;
@@ -232,6 +248,20 @@ export function handleHLSSegment(req: Request, res: Response): void {
   if(streamId === undefined) {
 
     res.status(404).send("Stream not found.");
+
+    return;
+  }
+
+  const stream = getStream(streamId);
+
+  if(stream?.m3u8Proxy) {
+
+    const proxied = await proxyM3u8Request({ channelName, req, res, stream });
+
+    if(proxied) {
+
+      updateLastAccess(streamId);
+    }
 
     return;
   }
@@ -272,6 +302,141 @@ export function handleHLSSegment(req: Request, res: Response): void {
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Content-Type", "video/mp4");
   res.send(segment);
+}
+
+interface ProxyRequestOptions {
+
+  channelName: string;
+  req: Request;
+  res: Response;
+  stream: StreamRegistryEntry;
+  url?: string;
+}
+
+function buildProxyUrl(channelName: string, targetUrl: string): string {
+
+  return "/hls/" + channelName + "/proxy?u=" + encodeURIComponent(targetUrl);
+}
+
+function rewritePlaylist(content: string, baseUrl: string, channelName: string): string {
+
+  const lines = content.split(/\r?\n/);
+
+  return lines.map((line) => {
+
+    if(!line) {
+
+      return line;
+    }
+
+    if(line.startsWith("#")) {
+
+      return line.replace(/URI="([^"]+)"/g, (_match, uri: string) => {
+
+        const absolute = new URL(uri, baseUrl).toString();
+
+        return "URI=\"" + buildProxyUrl(channelName, absolute) + "\"";
+      });
+    }
+
+    const absolute = new URL(line, baseUrl).toString();
+
+    return buildProxyUrl(channelName, absolute);
+  }).join("\n");
+}
+
+function isM3u8Content(url: string, contentType: string | null): boolean {
+
+  if(contentType && (contentType.includes("mpegurl") || contentType.includes("m3u8"))) {
+
+    return true;
+  }
+
+  return url.toLowerCase().includes(".m3u8");
+}
+
+async function proxyM3u8Request(options: ProxyRequestOptions): Promise<boolean> {
+
+  const { channelName, req, res, stream, url } = options;
+  const targetUrl = url ?? (typeof req.query.u === "string" ? req.query.u : "");
+
+  if(!targetUrl) {
+
+    res.status(400).send("Proxy URL is required.");
+
+    return false;
+  }
+
+  const headers: Record<string, string> = {
+    ...(stream.m3u8Proxy?.headers ?? {})
+  };
+  const rangeHeader = req.headers.range;
+
+  if(typeof rangeHeader === "string") {
+
+    headers.range = rangeHeader;
+  }
+
+  let response: Response;
+
+  try {
+
+    response = await fetch(targetUrl, { headers });
+  } catch(error) {
+
+    LOG.warn("M3U8 proxy fetch failed for %s: %s.", targetUrl, formatError(error));
+    res.status(502).send("Upstream request failed.");
+
+    return false;
+  }
+
+  const contentType = response.headers.get("content-type");
+
+  if(!response.ok) {
+
+    res.status(response.status).send("Upstream request failed.");
+
+    return false;
+  }
+
+  const upstreamUrl = response.url || targetUrl;
+
+  if(isM3u8Content(upstreamUrl, contentType)) {
+
+    const text = await response.text();
+    const rewritten = rewritePlaylist(text, upstreamUrl, channelName);
+
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
+    res.send(rewritten);
+
+    return true;
+  }
+
+  if(contentType) {
+
+    res.setHeader("Content-Type", contentType);
+  }
+
+  const contentLength = response.headers.get("content-length");
+
+  if(contentLength) {
+
+    res.setHeader("Content-Length", contentLength);
+  }
+
+  if(!response.body) {
+
+    res.status(502).send("Upstream response unavailable.");
+
+    return false;
+  }
+
+  const nodeStream = Readable.fromWeb(response.body as unknown as ReadableStream<Uint8Array>);
+
+  nodeStream.pipe(res);
+
+  return true;
 }
 
 // Ad-Hoc Streaming.
@@ -739,6 +904,7 @@ async function initializeStream(options: InitializeStreamOptions): Promise<numbe
           lastPlaylistRequest: Date.now(),
           storeKey: channelName
         },
+        m3u8Proxy: setup.m3u8Proxy,
         mpegTsClientCount: 0,
         page: setup.page,
         profile: setup.profile,
@@ -749,6 +915,27 @@ async function initializeStream(options: InitializeStreamOptions): Promise<numbe
         streamIdStr: setup.streamId,
         url: setup.url
       });
+
+      if(setup.streamMode === "m3u8-proxy") {
+
+        const displayName = channel?.name ?? url;
+        const tuneTime = ((Date.now() - setup.startTime.getTime()) / 1000).toFixed(1);
+
+        LOG.info("Streaming %s (%s, M3U8 Proxy). Tuned in %ss.", displayName, setup.profileName, tuneTime);
+
+        emitStreamAdded(createInitialStreamStatus({
+
+          channelName: channel?.name ?? null,
+          numericStreamId: setup.numericStreamId,
+          providerName: setup.providerName,
+          startTime: setup.startTime,
+          url: setup.url
+        }));
+        void emitCurrentSystemStatus();
+        triggerShowNameUpdate();
+
+        return setup.numericStreamId;
+      }
 
       // Create the native fMP4 segmenter to parse the MP4/AAC stream into HLS segments.
       const segmenter = createFMP4Segmenter({

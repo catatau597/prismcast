@@ -95,6 +95,12 @@ export interface StreamRegistryEntry {
   // Stream-specific info for idle detection.
   info: StreamInfo;
 
+  // Optional M3U8 passthrough metadata when using proxy mode.
+  m3u8Proxy?: {
+    headers?: Record<string, string>;
+    url: string;
+  };
+
   // The browser page for this stream.
   page: Page;
 
