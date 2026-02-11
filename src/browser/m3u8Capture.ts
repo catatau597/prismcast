@@ -28,7 +28,8 @@ const M3U8_URL_PATTERNS = [
   /\/playlist\.m3u8/i,
   /\/master\.m3u8/i,
   /hls.*\.m3u8/i,
-  /\/chunklist.*\.m3u8/i
+  /\/chunklist.*\.m3u8/i,
+  /m3u8/i
 ];
 
 function isM3u8Url(url: string): boolean {
@@ -67,15 +68,23 @@ export async function captureM3u8FromNetwork(options: M3u8CaptureOptions): Promi
 
     LOG.info("Network monitoring enabled for M3U8 capture.");
 
-    cdpSession.on("Network.responseReceived", (params: { response?: { url?: string } }) => {
-
-      const responseUrl = params.response?.url;
+    const handleUrl = (responseUrl?: string): void => {
 
       if(responseUrl && isM3u8Url(responseUrl) && !capturedM3u8) {
 
         LOG.info("M3U8 link detected: %s", responseUrl);
         capturedM3u8 = responseUrl;
       }
+    };
+
+    cdpSession.on("Network.responseReceived", (params: { response?: { url?: string } }) => {
+
+      handleUrl(params.response?.url);
+    });
+
+    cdpSession.on("Network.requestWillBeSent", (params: { request?: { url?: string } }) => {
+
+      handleUrl(params.request?.url);
     });
 
     await navigateToPage(page, url, profile);
