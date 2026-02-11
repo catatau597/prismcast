@@ -60,6 +60,31 @@ export async function captureM3u8FromNetwork(options: M3u8CaptureOptions): Promi
   const { page, profile, url, timeout = 15000 } = options;
   let cdpSession: CDPSession | null = null;
   let capturedM3u8: string | null = null;
+  const requestListener = (request: { url: () => string }): void => {
+
+    handleUrl(request.url());
+  };
+  const responseListener = (response: { url: () => string; headers: () => Record<string, string> }): void => {
+
+    const responseUrl = response.url();
+    const contentType = response.headers()["content-type"] ?? "";
+
+    if(contentType.includes("mpegurl") || contentType.includes("m3u8")) {
+
+      handleUrl(responseUrl);
+      return;
+    }
+
+    handleUrl(responseUrl);
+  };
+  const handleUrl = (responseUrl?: string): void => {
+
+    if(responseUrl && isM3u8Url(responseUrl) && !capturedM3u8) {
+
+      LOG.info("M3U8 link detected: %s", responseUrl);
+      capturedM3u8 = responseUrl;
+    }
+  };
 
   try {
 
@@ -67,15 +92,6 @@ export async function captureM3u8FromNetwork(options: M3u8CaptureOptions): Promi
     await cdpSession.send("Network.enable");
 
     LOG.info("Network monitoring enabled for M3U8 capture.");
-
-    const handleUrl = (responseUrl?: string): void => {
-
-      if(responseUrl && isM3u8Url(responseUrl) && !capturedM3u8) {
-
-        LOG.info("M3U8 link detected: %s", responseUrl);
-        capturedM3u8 = responseUrl;
-      }
-    };
 
     cdpSession.on("Network.responseReceived", (params: { response?: { url?: string } }) => {
 
@@ -86,6 +102,9 @@ export async function captureM3u8FromNetwork(options: M3u8CaptureOptions): Promi
 
       handleUrl(params.request?.url);
     });
+
+    page.on("request", requestListener);
+    page.on("response", responseListener);
 
     await navigateToPage(page, url, profile);
 
@@ -133,6 +152,9 @@ export async function captureM3u8FromNetwork(options: M3u8CaptureOptions): Promi
       reason: "M3U8 capture error: " + formatError(error)
     };
   } finally {
+
+    page.off("request", requestListener);
+    page.off("response", responseListener);
 
     if(cdpSession) {
 
