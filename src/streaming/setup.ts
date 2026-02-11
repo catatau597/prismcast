@@ -158,6 +158,9 @@ export interface StreamSetupResult {
   // Unique string ID for log correlation (e.g., "nbc-abc123").
   streamId: string;
 
+  // Whether this stream comes from browser capture or a captured M3U8 feed.
+  streamMode: "browser" | "m3u8";
+
   // The URL being streamed.
   url: string;
 }
@@ -837,6 +840,7 @@ export async function setupStream(options: StreamSetupOptions, onCircuitBreak: (
         url,
         requestHeaders: m3u8Result.requestHeaders
       });
+        streamMode: "browser",
     }
 
     // Create page and start capture using the shared function. This handles browser page creation, capture initialization, FFmpeg spawning, and navigation with retry.
@@ -967,13 +971,22 @@ async function setupM3u8Stream(options: M3u8StreamSetupOptions): Promise<StreamS
     requestHeaders
   } = options;
 
-  const inputOptions: string[] = [];
+  const inputOptions: string[] = [
+    // Low-latency input tuning for M3U8 remuxing (no re-encode).
+    "-fflags", "+nobuffer",
+    "-flags", "low_delay",
+    "-analyzeduration", "0",
+    "-probesize", "32768",
+    "-max_delay", "0"
+  ];
   const outputOptions: string[] = [
     "-c:v", "copy",
     "-c:a", "aac",
     "-b:a", String(CONFIG.streaming.audioBitsPerSecond),
     "-f", "mp4",
-    "-movflags", "frag_keyframe+empty_moov+default_base_moof"
+    "-movflags", "frag_keyframe+empty_moov+default_base_moof",
+    "-muxdelay", "0",
+    "-muxpreload", "0"
   ];
 
   if(requestHeaders) {
@@ -1121,6 +1134,7 @@ async function setupM3u8Stream(options: M3u8StreamSetupOptions): Promise<StreamS
     ffmpegProcess,
     stopMonitor,
     cleanup,
-    page: pagePlaceholder
+    page: pagePlaceholder,
+    streamMode: "m3u8"
   };
 }

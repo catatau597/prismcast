@@ -6,8 +6,8 @@ import type { Channel, Nullable, ResolvedSiteProfile } from "../types/index.js";
 import { LOG, delay, formatError, runWithStreamContext } from "../utils/index.js";
 import type { Request, Response } from "express";
 import { StreamSetupError, createPageWithCapture, setupStream } from "./setup.js";
-import { createHLSState, getAllStreams, getStream, getStreamCount, registerStream, updateLastAccess } from "./registry.js";
-import { createInitialStreamStatus, emitStreamAdded } from "./statusEmitter.js";
+import { createHLSState, getAllStreams, getStream, getStreamCount, getStreamMemoryUsage, registerStream, updateLastAccess } from "./registry.js";
+import { createInitialStreamStatus, emitStreamAdded, emitStreamHealthChanged, getStreamStatus } from "./statusEmitter.js";
 import { deleteChannelStreamId, getChannelStreamId, isTerminationInitiated, setChannelStreamId, terminateStream } from "./lifecycle.js";
 import { emitCurrentSystemStatus, isLoginModeActive, unregisterManagedPage } from "../browser/index.js";
 import { getAllChannels, isPredefinedChannelDisabled } from "../config/userChannels.js";
@@ -20,8 +20,8 @@ import type { TabReplacementHandlerFactory } from "./setup.js";
 import type { TabReplacementResult } from "./monitor.js";
 import { createFMP4Segmenter } from "./fmp4Segmenter.js";
 import { createHash } from "node:crypto";
-import { registerClient } from "./clients.js";
-import { triggerShowNameUpdate } from "./showInfo.js";
+import { getClientSummary, registerClient } from "./clients.js";
+import { getChannelLogo, getShowName, triggerShowNameUpdate } from "./showInfo.js";
 
 /* This module handles HLS (HTTP Live Streaming) output using fMP4 (fragmented MP4) segments. HLS mode uses MP4/AAC capture from puppeteer-stream, which is then
  * segmented natively without any external dependencies. The overall flow is:
@@ -610,6 +610,47 @@ function createTabReplacementHandler(
   };
 }
 
+function startM3u8StatusTicker(streamId: number, startTime: Date): () => void {
+
+  const intervalMs = CONFIG.playback.monitorInterval;
+  const emitUpdate = (): void => {
+
+    const entry = getStream(streamId);
+    const existing = getStreamStatus(streamId);
+
+    if(!entry || !existing) {
+
+      return;
+    }
+
+    const now = Date.now();
+    const channelKey = entry.info.storeKey ?? "";
+    const clientSummary = getClientSummary(streamId);
+    const memoryBytes = getStreamMemoryUsage(entry).total;
+
+    emitStreamHealthChanged({
+
+      ...existing,
+      clientCount: clientSummary.total,
+      clients: clientSummary.clients,
+      duration: Math.round((now - startTime.getTime()) / 1000),
+      logoUrl: channelKey ? (getChannelLogo(channelKey) ?? "") : existing.logoUrl,
+      memoryBytes,
+      showName: getShowName(streamId),
+      startTime: startTime.toISOString()
+    });
+  };
+
+  emitUpdate();
+
+  const intervalId = setInterval(emitUpdate, intervalMs);
+
+  return (): void => {
+
+    clearInterval(intervalId);
+  };
+}
+
 // Stream Initialization.
 
 /**
@@ -817,6 +858,40 @@ async function initializeStream(options: InitializeStreamOptions): Promise<numbe
         startTime: setup.startTime,
         url: setup.url
       }));
+
+      if(setup.streamMode === "m3u8") {
+
+        const stopStatusTicker = startM3u8StatusTicker(setup.numericStreamId, setup.startTime);
+        const streamEntry = getStream(setup.numericStreamId);
+
+        if(streamEntry) {
+
+          const originalStopMonitor = streamEntry.stopMonitor;
+
+          streamEntry.stopMonitor = () => {
+
+            stopStatusTicker();
+
+            return originalStopMonitor ? originalStopMonitor() : {
+              currentRecoveryMethod: null,
+              currentRecoveryStartTime: null,
+              pageNavigationAttempts: 0,
+              pageNavigationSuccesses: 0,
+              playUnmuteAttempts: 0,
+              playUnmuteSuccesses: 0,
+              sourceReloadAttempts: 0,
+              sourceReloadSuccesses: 0,
+              tabReplacementAttempts: 0,
+              tabReplacementSuccesses: 0,
+              totalRecoveryTimeMs: 0
+            };
+          };
+        } else {
+
+          stopStatusTicker();
+        }
+      }
+
       void emitCurrentSystemStatus();
 
       // Trigger show name lookup for the new stream.
