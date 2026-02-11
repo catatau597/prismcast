@@ -1017,12 +1017,18 @@ async function setupM3u8Stream(options: M3u8StreamSetupOptions): Promise<StreamS
 
   const captureStream = process.stdout;
 
-  const stopMonitor = () => ({
-    attemptCount: 0,
-    circuitBreakerTripped: false,
-    lastIssueTime: null,
-    lastIssueType: null,
-    pageReloadsInWindow: 0
+  const stopMonitor = (): RecoveryMetrics => ({
+    currentRecoveryMethod: null,
+    currentRecoveryStartTime: null,
+    pageNavigationAttempts: 0,
+    pageNavigationSuccesses: 0,
+    playUnmuteAttempts: 0,
+    playUnmuteSuccesses: 0,
+    sourceReloadAttempts: 0,
+    sourceReloadSuccesses: 0,
+    tabReplacementAttempts: 0,
+    tabReplacementSuccesses: 0,
+    totalRecoveryTimeMs: 0
   });
 
   let cleanupCompleted = false;

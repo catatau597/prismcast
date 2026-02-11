@@ -83,11 +83,11 @@ RUN wget -q -O /tmp/google-chrome.deb https://dl.google.com/linux/direct/google-
 # Install PrismCast from the local project to reflect repository changes.
 WORKDIR /usr/src/prismcast
 COPY package*.json ./
+COPY tsconfig.json ./
 COPY src ./src
 COPY bin ./bin
-COPY tsconfig.json ./
-COPY README.md ./
-COPY LICENSE.md ./
+RUN npm install
+RUN npm run build
 RUN npm install -g .
 
 # Create a Chrome wrapper script that passes --no-sandbox for container environments. Chrome refuses to run as root without this flag.

@@ -21,9 +21,12 @@ Thumbs.db
 # Documentation
 *.md
 LICENSE
+!README.md
+!LICENSE.md
 
 # Development files
 tsconfig.json
+!tsconfig.json
 eslint.config.js
 .eslintrc*
 .prettierrc*
