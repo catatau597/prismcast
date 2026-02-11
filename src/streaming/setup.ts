@@ -840,7 +840,6 @@ export async function setupStream(options: StreamSetupOptions, onCircuitBreak: (
         url,
         requestHeaders: m3u8Result.requestHeaders
       });
-        streamMode: "browser",
     }
 
     // Create page and start capture using the shared function. This handles browser page creation, capture initialization, FFmpeg spawning, and navigation with retry.

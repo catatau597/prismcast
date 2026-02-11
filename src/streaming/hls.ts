@@ -2,26 +2,26 @@
  *
  * hls.ts: HLS streaming request handlers for PrismCast.
  */
+import { emitCurrentSystemStatus, isLoginModeActive, unregisterManagedPage } from "../browser/index.js";
+import { getResolvedChannel, resolveProviderKey } from "../config/providers.js";
+import { getAllChannels, isPredefinedChannelDisabled } from "../config/userChannels.js";
 import type { Channel, Nullable, ResolvedSiteProfile } from "../types/index.js";
 import { LOG, delay, formatError, runWithStreamContext } from "../utils/index.js";
-import type { Request, Response } from "express";
-import { StreamSetupError, createPageWithCapture, setupStream } from "./setup.js";
-import { createHLSState, getAllStreams, getStream, getStreamCount, getStreamMemoryUsage, registerStream, updateLastAccess } from "./registry.js";
-import { createInitialStreamStatus, emitStreamAdded, emitStreamHealthChanged, getStreamStatus } from "./statusEmitter.js";
-import { deleteChannelStreamId, getChannelStreamId, isTerminationInitiated, setChannelStreamId, terminateStream } from "./lifecycle.js";
-import { emitCurrentSystemStatus, isLoginModeActive, unregisterManagedPage } from "../browser/index.js";
-import { getAllChannels, isPredefinedChannelDisabled } from "../config/userChannels.js";
+import { getClientSummary, registerClient } from "./clients.js";
 import { getInitSegment, getPlaylist, getSegment, waitForPlaylist } from "./hlsSegments.js";
-import { getResolvedChannel, resolveProviderKey } from "../config/providers.js";
+import { deleteChannelStreamId, getChannelStreamId, isTerminationInitiated, setChannelStreamId, terminateStream } from "./lifecycle.js";
+import type { RecoveryMetrics, TabReplacementResult } from "./monitor.js";
+import { createHLSState, getAllStreams, getStream, getStreamCount, getStreamMemoryUsage, registerStream, updateLastAccess } from "./registry.js";
+import { StreamSetupError, createPageWithCapture, setupStream } from "./setup.js";
+import { getChannelLogo, getShowName, triggerShowNameUpdate } from "./showInfo.js";
+import { createInitialStreamStatus, emitStreamAdded, emitStreamHealthChanged, getStreamStatus } from "./statusEmitter.js";
+import type { Request, Response } from "express";
 import { CONFIG } from "../config/index.js";
 import type { FMP4SegmenterResult } from "./fmp4Segmenter.js";
+import { createFMP4Segmenter } from "./fmp4Segmenter.js";
 import type { StreamRegistryEntry } from "./registry.js";
 import type { TabReplacementHandlerFactory } from "./setup.js";
-import type { TabReplacementResult } from "./monitor.js";
-import { createFMP4Segmenter } from "./fmp4Segmenter.js";
 import { createHash } from "node:crypto";
-import { getClientSummary, registerClient } from "./clients.js";
-import { getChannelLogo, getShowName, triggerShowNameUpdate } from "./showInfo.js";
 
 /* This module handles HLS (HTTP Live Streaming) output using fMP4 (fragmented MP4) segments. HLS mode uses MP4/AAC capture from puppeteer-stream, which is then
  * segmented natively without any external dependencies. The overall flow is:
@@ -624,7 +624,7 @@ function startM3u8StatusTicker(streamId: number, startTime: Date): () => void {
     }
 
     const now = Date.now();
-    const channelKey = entry.info.storeKey ?? "";
+    const channelKey = entry.info.storeKey;
     const clientSummary = getClientSummary(streamId);
     const memoryBytes = getStreamMemoryUsage(entry).total;
 
@@ -868,11 +868,12 @@ async function initializeStream(options: InitializeStreamOptions): Promise<numbe
 
           const originalStopMonitor = streamEntry.stopMonitor;
 
-          streamEntry.stopMonitor = () => {
+          streamEntry.stopMonitor = (): RecoveryMetrics => {
 
             stopStatusTicker();
 
             return originalStopMonitor ? originalStopMonitor() : {
+
               currentRecoveryMethod: null,
               currentRecoveryStartTime: null,
               pageNavigationAttempts: 0,
