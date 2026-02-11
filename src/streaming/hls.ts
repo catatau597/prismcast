@@ -12,7 +12,7 @@ import { getResolvedChannel, resolveProviderKey } from "../config/providers.js";
 import { getAllChannels, isPredefinedChannelDisabled } from "../config/userChannels.js";
 import type { Channel, Nullable, ResolvedSiteProfile } from "../types/index.js";
 import { LOG, delay, formatError, runWithStreamContext } from "../utils/index.js";
-import { registerClient } from "./clients.js";
+import { getClientSummary, registerClient } from "./clients.js";
 import { createFMP4Segmenter } from "./fmp4Segmenter.js";
 import { getInitSegment, getPlaylist, getSegment, waitForPlaylist } from "./hlsSegments.js";
 import type { FMP4SegmenterResult } from "./fmp4Segmenter.js";
@@ -23,7 +23,7 @@ import type { StreamRegistryEntry } from "./registry.js";
 import { createHLSState, getAllStreams, getStream, getStreamCount, registerStream, updateLastAccess } from "./registry.js";
 import { StreamSetupError, createPageWithCapture, setupStream } from "./setup.js";
 import { triggerShowNameUpdate } from "./showInfo.js";
-import { createInitialStreamStatus, emitStreamAdded } from "./statusEmitter.js";
+import { createInitialStreamStatus, emitStreamAdded, emitStreamHealthChanged, getStreamStatus } from "./statusEmitter.js";
 
 /* This module handles HLS (HTTP Live Streaming) output using fMP4 (fragmented MP4) segments. HLS mode uses MP4/AAC capture from puppeteer-stream, which is then
  * segmented natively without any external dependencies. The overall flow is:
@@ -176,6 +176,7 @@ export async function handleHLSPlaylist(req: Request, res: ExpressResponse): Pro
 
       updateLastAccess(streamId);
       registerClient(streamId, clientAddress, "hls");
+      updateProxyStreamStatus(streamId);
     }
 
     return;
@@ -262,6 +263,7 @@ export async function handleHLSSegment(req: Request, res: ExpressResponse): Prom
     if(proxied) {
 
       updateLastAccess(streamId);
+      updateProxyStreamStatus(streamId);
     }
 
     return;
@@ -354,6 +356,29 @@ function isM3u8Content(url: string, contentType: string | null): boolean {
   }
 
   return url.toLowerCase().includes(".m3u8");
+}
+
+function updateProxyStreamStatus(streamId: number): void {
+
+  const stream = getStream(streamId);
+  const existing = getStreamStatus(streamId);
+
+  if(!stream || !existing) {
+
+    return;
+  }
+
+  const now = Date.now();
+  const clientSummary = getClientSummary(streamId);
+
+  emitStreamHealthChanged({
+
+    ...existing,
+    clientCount: clientSummary.total,
+    clients: clientSummary.clients,
+    duration: Math.round((now - stream.startTime.getTime()) / 1000),
+    startTime: stream.startTime.toISOString()
+  });
 }
 
 type FetchResponse = globalThis.Response;
