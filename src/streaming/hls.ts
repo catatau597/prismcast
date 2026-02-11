@@ -2,9 +2,10 @@
  *
  * hls.ts: HLS streaming request handlers for PrismCast.
  */
-import type { Request, Response } from "express";
+import type { Request, Response as ExpressResponse } from "express";
 import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
+import type { ReadableStream as WebReadableStream } from "node:stream/web";
 import { emitCurrentSystemStatus, isLoginModeActive, unregisterManagedPage } from "../browser/index.js";
 import { CONFIG } from "../config/index.js";
 import { getResolvedChannel, resolveProviderKey } from "../config/providers.js";
@@ -56,7 +57,7 @@ import { createInitialStreamStatus, emitStreamAdded } from "./statusEmitter.js";
  * @param res - Express response object (for error responses).
  * @returns The stream ID if a stream is running, or null if an error occurred.
  */
-export async function ensureChannelStream(channelName: string, req: Request, res: Response): Promise<number | null> {
+export async function ensureChannelStream(channelName: string, req: Request, res: ExpressResponse): Promise<number | null> {
 
   // Check for an existing stream first. This must happen before channel validation so that ad-hoc streams (registered under synthetic keys like "play-a1b2c3d4") can
   // be served by the standard HLS playlist handler without failing the "Channel not found" check. A stream in channelToStreamId was already validated when it was
@@ -143,7 +144,7 @@ export async function ensureChannelStream(channelName: string, req: Request, res
  * @param req - Express request object.
  * @param res - Express response object.
  */
-export async function handleHLSPlaylist(req: Request, res: Response): Promise<void> {
+export async function handleHLSPlaylist(req: Request, res: ExpressResponse): Promise<void> {
 
   const channelName = (req.params as { name?: string }).name;
 
@@ -231,7 +232,7 @@ export async function handleHLSPlaylist(req: Request, res: Response): Promise<vo
  * @param req - Express request object.
  * @param res - Express response object.
  */
-export async function handleHLSSegment(req: Request, res: Response): Promise<void> {
+export async function handleHLSSegment(req: Request, res: ExpressResponse): Promise<void> {
 
   const channelName = (req.params as { name?: string }).name;
   const segmentName = (req.params as { segment?: string }).segment;
@@ -308,7 +309,7 @@ interface ProxyRequestOptions {
 
   channelName: string;
   req: Request;
-  res: Response;
+  res: ExpressResponse;
   stream: StreamRegistryEntry;
   url?: string;
 }
@@ -355,6 +356,8 @@ function isM3u8Content(url: string, contentType: string | null): boolean {
   return url.toLowerCase().includes(".m3u8");
 }
 
+type FetchResponse = globalThis.Response;
+
 async function proxyM3u8Request(options: ProxyRequestOptions): Promise<boolean> {
 
   const { channelName, req, res, stream, url } = options;
@@ -368,6 +371,7 @@ async function proxyM3u8Request(options: ProxyRequestOptions): Promise<boolean> 
   }
 
   const headers: Record<string, string> = {
+
     ...(stream.m3u8Proxy?.headers ?? {})
   };
   const rangeHeader = req.headers.range;
@@ -377,7 +381,7 @@ async function proxyM3u8Request(options: ProxyRequestOptions): Promise<boolean> 
     headers.range = rangeHeader;
   }
 
-  let response: Response;
+  let response: FetchResponse;
 
   try {
 
@@ -432,7 +436,7 @@ async function proxyM3u8Request(options: ProxyRequestOptions): Promise<boolean> 
     return false;
   }
 
-  const nodeStream = Readable.fromWeb(response.body as unknown as ReadableStream<Uint8Array>);
+  const nodeStream = Readable.fromWeb(response.body as unknown as WebReadableStream);
 
   nodeStream.pipe(res);
 
@@ -453,7 +457,7 @@ async function proxyM3u8Request(options: ProxyRequestOptions): Promise<boolean> 
  * @param req - Express request object.
  * @param res - Express response object.
  */
-export async function handlePlayStream(req: Request, res: Response): Promise<void> {
+export async function handlePlayStream(req: Request, res: ExpressResponse): Promise<void> {
 
   const url = (req.query.url as string | undefined)?.trim();
 
@@ -565,7 +569,7 @@ export async function handlePlayStream(req: Request, res: Response): Promise<voi
  * @param res - Express response object for sending error responses on failure.
  * @returns The resolved stream ID on success, or null if startup failed or timed out (error response already sent).
  */
-async function awaitStreamReady(channelName: string, res: Response): Promise<number | null> {
+async function awaitStreamReady(channelName: string, res: ExpressResponse): Promise<number | null> {
 
   const pollInterval = 200;
   const deadline = Date.now() + CONFIG.streaming.navigationTimeout;
@@ -1027,7 +1031,7 @@ async function initializeStream(options: InitializeStreamOptions): Promise<numbe
  * @param channel - The resolved channel definition (with inheritance applied for provider variants).
  * @returns The stream ID if successful, null if an error occurred (error response already sent).
  */
-async function startHLSStream(channelName: string, url: string, req: Request, res: Response, channel?: Channel): Promise<number | null> {
+async function startHLSStream(channelName: string, url: string, req: Request, res: ExpressResponse, channel?: Channel): Promise<number | null> {
 
   const profileOverride = req.query.profile as string | undefined;
   const clientAddress: Nullable<string> = req.ip ?? req.socket.remoteAddress ?? null;
