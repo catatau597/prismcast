@@ -1010,7 +1010,7 @@ async function setupM3u8Stream(options: M3u8StreamSetupOptions): Promise<StreamS
   ];
 
   const ffmpegPath = await resolveFFmpegPath() ?? "ffmpeg";
-  const process = spawn(ffmpegPath, ffmpegArgs, { stdio: [ "ignore", "pipe", "pipe" ] });
+  const process = spawn(ffmpegPath, ffmpegArgs, { stdio: [ "pipe", "pipe", "pipe" ] });
 
   process.on("error", (error) => {
 
