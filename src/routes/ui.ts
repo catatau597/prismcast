@@ -129,11 +129,11 @@ export function generateBaseStyles(): string {
     ".form-checkbox { flex: none; width: 18px; height: 18px; cursor: pointer; accent-color: var(--interactive-primary); }",
 
     // Toggle switch styles.
-    ".toggle-container { display: flex; align-items: center; gap: 12px; margin: 16px 0; padding: 12px; background: var(--bg-secondary); ",
-    "border-radius: 8px; }",
+    ".toggle-container { display: flex; align-items: center; gap: 12px; margin: 16px 0; padding: 12px; background: var(--surface-sunken); ",
+    "border-radius: 8px; border: 1px solid var(--border-light); }",
     ".toggle-container label { font-weight: 500; color: var(--text-primary); margin: 0; flex: 1; }",
-    ".toggle-switch { position: relative; width: 44px; height: 24px; background: var(--border-color); border-radius: 12px; cursor: pointer; ",
-    "transition: background-color 0.3s; }",
+    ".toggle-switch { position: relative; width: 44px; height: 24px; background: var(--border-default); border-radius: 12px; cursor: pointer; ",
+    "transition: background-color 0.3s; display: inline-block; flex-shrink: 0; }",
     ".toggle-switch.active { background: #2196f3; }",
     ".toggle-switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 20px; height: 20px; background: white; border-radius: 50%; ",
     "transition: transform 0.3s; }",
