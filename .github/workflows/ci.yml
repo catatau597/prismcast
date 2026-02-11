@@ -94,6 +94,10 @@ jobs:
     name: 'Publish Docker image'
     needs: [build, publish-npm]
 
+    permissions:
+      contents: read
+      packages: write
+
     # Publish after npm succeeds on release events, or on manual workflow dispatch (where publish-npm is skipped).
     if: |
       always() &&
