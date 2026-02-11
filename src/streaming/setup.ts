@@ -948,6 +948,7 @@ export async function setupStream(options: StreamSetupOptions, onCircuitBreak: (
       startTime,
       stopMonitor,
       streamId,
+      streamMode: "browser",
       url
     };
   });
@@ -1121,19 +1122,19 @@ async function setupM3u8Stream(options: M3u8StreamSetupOptions): Promise<StreamS
 
   return {
     captureStream,
-    rawCaptureStream: captureStream,
     channelName,
+    cleanup,
+    ffmpegProcess,
     numericStreamId,
-    streamId,
-    url,
-    startTime,
+    page: pagePlaceholder,
     profile,
     profileName,
     providerName,
-    ffmpegProcess,
+    rawCaptureStream: captureStream,
+    startTime,
     stopMonitor,
-    cleanup,
-    page: pagePlaceholder,
-    streamMode: "m3u8"
+    streamId,
+    streamMode: "m3u8",
+    url
   };
 }
