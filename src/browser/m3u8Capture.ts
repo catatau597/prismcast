@@ -19,6 +19,7 @@ export interface M3u8CaptureResult {
 
   success: boolean;
   m3u8Url?: string;
+  requestHeaders?: Record<string, string>;
   reason?: string;
 }
 
@@ -60,9 +61,10 @@ export async function captureM3u8FromNetwork(options: M3u8CaptureOptions): Promi
   const { page, profile, url, timeout = 15000 } = options;
   let cdpSession: CDPSession | null = null;
   let capturedM3u8: string | null = null;
-  const requestListener = (request: { url: () => string }): void => {
+  let capturedHeaders: Record<string, string> | null = null;
+  const requestListener = (request: { url: () => string; headers: () => Record<string, string> }): void => {
 
-    handleUrl(request.url());
+    handleUrl(request.url(), request.headers());
   };
   const responseListener = (response: { url: () => string; headers: () => Record<string, string> }): void => {
 
@@ -77,12 +79,16 @@ export async function captureM3u8FromNetwork(options: M3u8CaptureOptions): Promi
 
     handleUrl(responseUrl);
   };
-  const handleUrl = (responseUrl?: string): void => {
+  const handleUrl = (responseUrl?: string, headers?: Record<string, string>): void => {
 
     if(responseUrl && isM3u8Url(responseUrl) && !capturedM3u8) {
 
       LOG.info("M3U8 link detected: %s", responseUrl);
       capturedM3u8 = responseUrl;
+      if(headers) {
+
+        capturedHeaders = { ...headers };
+      }
     }
   };
 
@@ -98,9 +104,9 @@ export async function captureM3u8FromNetwork(options: M3u8CaptureOptions): Promi
       handleUrl(params.response?.url);
     });
 
-    cdpSession.on("Network.requestWillBeSent", (params: { request?: { url?: string } }) => {
+    cdpSession.on("Network.requestWillBeSent", (params: { request?: { url?: string; headers?: Record<string, string> } }) => {
 
-      handleUrl(params.request?.url);
+      handleUrl(params.request?.url, params.request?.headers);
     });
 
     page.on("request", requestListener);
@@ -141,7 +147,8 @@ export async function captureM3u8FromNetwork(options: M3u8CaptureOptions): Promi
 
     return {
       success: true,
-      m3u8Url: capturedM3u8
+      m3u8Url: capturedM3u8,
+      requestHeaders: capturedHeaders ?? undefined
     };
   } catch(error) {
 

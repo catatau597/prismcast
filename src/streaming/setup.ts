@@ -834,7 +834,8 @@ export async function setupStream(options: StreamSetupOptions, onCircuitBreak: (
         providerName,
         startTime,
         streamId,
-        url
+        url,
+        requestHeaders: m3u8Result.requestHeaders
       });
     }
 
@@ -962,7 +963,8 @@ async function setupM3u8Stream(options: M3u8StreamSetupOptions): Promise<StreamS
     providerName,
     startTime,
     streamId,
-    url
+    url,
+    requestHeaders
   } = options;
 
   const ffmpegArgs = [
@@ -975,18 +977,47 @@ async function setupM3u8Stream(options: M3u8StreamSetupOptions): Promise<StreamS
     "-"
   ];
 
+  if(requestHeaders) {
+
+    const headerAllowList = new Set([ "user-agent", "referer", "origin", "cookie", "authorization" ]);
+    const headerLines = Object.entries(requestHeaders)
+      .filter(([ key, value ]) => headerAllowList.has(key.toLowerCase()) && value)
+      .map(([ key, value ]) => key + ": " + value)
+      .join("\r\n");
+
+    if(headerLines) {
+
+      ffmpegArgs.unshift("-headers", headerLines + "\r\n");
+
+      const userAgent = requestHeaders["user-agent"] ?? requestHeaders["User-Agent"];
+
+      if(userAgent) {
+
+        ffmpegArgs.unshift("-user_agent", userAgent);
+      }
+    }
+  }
+
   if(metadataComment) {
 
     ffmpegArgs.unshift("-metadata", "comment=" + metadataComment);
   }
 
   const ffmpegPath = await resolveFFmpegPath() ?? "ffmpeg";
-  const process = spawn(ffmpegPath, ffmpegArgs, { stdio: [ "pipe", "pipe", "pipe" ] });
+  const process = spawn(ffmpegPath, ffmpegArgs, { stdio: [ "ignore", "pipe", "pipe" ] });
 
   process.on("error", (error) => {
 
     LOG.error("FFmpeg M3U8 process error: %s", formatError(error));
     onCircuitBreak();
+  });
+
+  process.on("exit", (code, signal) => {
+
+    if(code !== 0) {
+
+      LOG.warn("FFmpeg M3U8 exited with code %s (signal %s).", String(code), signal ?? "none");
+    }
   });
 
   if(process.stderr) {
@@ -1065,6 +1096,11 @@ async function setupM3u8Stream(options: M3u8StreamSetupOptions): Promise<StreamS
     }
   };
 
+  const pagePlaceholder = {
+    isClosed: () => true,
+    close: async () => {}
+  } as unknown as Page;
+
   return {
     captureStream,
     rawCaptureStream: captureStream,
@@ -1079,6 +1115,6 @@ async function setupM3u8Stream(options: M3u8StreamSetupOptions): Promise<StreamS
     ffmpegProcess,
     stopMonitor,
     cleanup,
-    page: null as unknown as Page
+    page: pagePlaceholder
   };
 }

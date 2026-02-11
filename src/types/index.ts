@@ -542,6 +542,9 @@ export interface M3u8StreamSetupOptions {
 
   // The URL being streamed.
   url: string;
+
+  // Optional headers captured from the browser request to the M3U8 URL.
+  requestHeaders?: Record<string, string>;
 }
 
 /**
