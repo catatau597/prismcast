@@ -734,6 +734,20 @@ export function validateImportedChannels(data: unknown, validProfiles: string[])
       channel.channelSelector = channelData.channelSelector;
     }
 
+    if(channelData.m3u8TtlSeconds !== undefined) {
+
+      const ttlSeconds = Number(channelData.m3u8TtlSeconds);
+
+      if(!Number.isFinite(ttlSeconds) || (ttlSeconds <= 0)) {
+
+        errors.push("Channel '" + key + "': m3u8TtlSeconds must be a positive number.");
+
+        continue;
+      }
+
+      channel.m3u8TtlSeconds = ttlSeconds;
+    }
+
     // Validate optional channelNumber field (range and type).
     if(channelData.channelNumber !== undefined) {
 

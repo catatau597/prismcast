@@ -6,14 +6,16 @@ import type { Request, Response as ExpressResponse } from "express";
 import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
 import type { ReadableStream as WebReadableStream } from "node:stream/web";
-import { emitCurrentSystemStatus, isLoginModeActive, unregisterManagedPage } from "../browser/index.js";
+import { emitCurrentSystemStatus, getCurrentBrowser, isLoginModeActive, registerManagedPage, unregisterManagedPage } from "../browser/index.js";
 import { CONFIG } from "../config/index.js";
+import { buildM3u8CacheKey, computeM3u8ExpiresAt, setM3u8CacheEntry } from "../config/m3u8Cache.js";
 import { getResolvedChannel, resolveProviderKey } from "../config/providers.js";
 import { getAllChannels, isPredefinedChannelDisabled } from "../config/userChannels.js";
 import type { Channel, Nullable, ResolvedSiteProfile } from "../types/index.js";
 import { LOG, delay, formatError, runWithStreamContext } from "../utils/index.js";
 import { getClientSummary, registerClient } from "./clients.js";
 import { createFMP4Segmenter } from "./fmp4Segmenter.js";
+import { captureM3u8FromNetwork } from "../browser/m3u8Capture.js";
 import { getInitSegment, getPlaylist, getSegment, waitForPlaylist } from "./hlsSegments.js";
 import type { FMP4SegmenterResult } from "./fmp4Segmenter.js";
 import { deleteChannelStreamId, getChannelStreamId, isTerminationInitiated, setChannelStreamId, terminateStream } from "./lifecycle.js";
@@ -383,7 +385,92 @@ function updateProxyStreamStatus(streamId: number): void {
 
 type FetchResponse = globalThis.Response;
 
-async function proxyM3u8Request(options: ProxyRequestOptions): Promise<boolean> {
+const proxyRefreshes = new Map<number, Promise<boolean>>();
+
+async function refreshProxyM3u8(stream: StreamRegistryEntry): Promise<boolean> {
+
+  if(!stream.m3u8Proxy) {
+
+    return false;
+  }
+
+  const existing = proxyRefreshes.get(stream.id);
+
+  if(existing) {
+
+    return existing;
+  }
+
+  const refreshPromise = (async () => {
+
+    const browser = await getCurrentBrowser();
+    const tempPage = await browser.newPage();
+
+    registerManagedPage(tempPage);
+
+    try {
+
+      const result = await captureM3u8FromNetwork({ page: tempPage, profile: stream.profile, url: stream.url });
+
+      if(!result.success || !result.m3u8Url) {
+
+        return false;
+      }
+
+      if(!stream.m3u8Proxy) {
+
+        stream.m3u8Proxy = {
+          headers: result.requestHeaders ?? {},
+          url: result.m3u8Url
+        };
+      } else {
+
+        stream.m3u8Proxy.url = result.m3u8Url;
+        stream.m3u8Proxy.headers = result.requestHeaders ?? stream.m3u8Proxy.headers;
+      }
+
+      const channel = getAllChannels()[stream.info.storeKey];
+      const capturedAtMs = Date.now();
+      const expiresAt = computeM3u8ExpiresAt(result.m3u8Url, capturedAtMs, channel?.m3u8TtlSeconds);
+      const cacheKey = buildM3u8CacheKey(stream.info.storeKey, stream.url);
+
+      await setM3u8CacheEntry(cacheKey, {
+        capturedAt: new Date(capturedAtMs).toISOString(),
+        expiresAt,
+        headers: result.requestHeaders,
+        m3u8Url: result.m3u8Url,
+        sourceUrl: stream.url
+      });
+
+      return true;
+    } catch(error) {
+
+      LOG.warn("M3U8 recapture failed for %s: %s.", stream.url, formatError(error));
+
+      return false;
+    } finally {
+
+      unregisterManagedPage(tempPage);
+
+      if(!tempPage.isClosed()) {
+
+        await tempPage.close().catch(() => {});
+      }
+    }
+  })();
+
+  proxyRefreshes.set(stream.id, refreshPromise);
+
+  try {
+
+    return await refreshPromise;
+  } finally {
+
+    proxyRefreshes.delete(stream.id);
+  }
+}
+
+async function proxyM3u8Request(options: ProxyRequestOptions, allowRefresh = true): Promise<boolean> {
 
   const { channelName, req, res, stream, url } = options;
   const targetUrl = url ?? (typeof req.query.u === "string" ? req.query.u : "");
@@ -414,6 +501,12 @@ async function proxyM3u8Request(options: ProxyRequestOptions): Promise<boolean> 
   } catch(error) {
 
     LOG.warn("M3U8 proxy fetch failed for %s: %s.", targetUrl, formatError(error));
+
+    if(allowRefresh && await refreshProxyM3u8(stream)) {
+
+      return proxyM3u8Request({ ...options, url: stream.m3u8Proxy?.url }, false);
+    }
+
     res.status(502).send("Upstream request failed.");
 
     return false;
@@ -422,6 +515,11 @@ async function proxyM3u8Request(options: ProxyRequestOptions): Promise<boolean> 
   const contentType = response.headers.get("content-type");
 
   if(!response.ok) {
+
+    if(allowRefresh && await refreshProxyM3u8(stream)) {
+
+      return proxyM3u8Request({ ...options, url: stream.m3u8Proxy?.url }, false);
+    }
 
     res.status(response.status).send("Upstream request failed.");
 

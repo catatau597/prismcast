@@ -503,6 +503,9 @@ export interface Channel {
 
   // When true, PrismCast attempts to capture the M3U8 link from network traffic instead of using screen capture.
   useM3u8Link?: boolean;
+
+  // Optional TTL in seconds for cached M3U8 links. Used when the link does not provide an explicit expiration.
+  m3u8TtlSeconds?: number;
 }
 
 /**

@@ -9,6 +9,7 @@ import type { MonitorStreamInfo, RecoveryMetrics, TabReplacementResult } from ".
 import { closeBrowser, getCurrentBrowser, getStream, minimizeBrowserWindow, registerManagedPage, unregisterManagedPage } from "../browser/index.js";
 import { getNextStreamId, getStreamCount } from "./registry.js";
 import { getProfileForChannel, getProfileForUrl, getProfiles, resolveProfile } from "../config/profiles.js";
+import { buildM3u8CacheKey, computeM3u8ExpiresAt, getM3u8CacheEntry, isM3u8CacheExpired, setM3u8CacheEntry } from "../config/m3u8Cache.js";
 import { initializePlayback, navigateToPage } from "../browser/video.js";
 import { captureM3u8FromNetwork } from "../browser/m3u8Capture.js";
 import type { M3u8CaptureResult } from "../browser/m3u8Capture.js";
@@ -790,6 +791,30 @@ export async function setupStream(options: StreamSetupOptions, onCircuitBreak: (
 
     if(shouldCaptureM3u8) {
 
+      const cacheChannelKey = channelName ?? "url";
+      const cacheKey = buildM3u8CacheKey(cacheChannelKey, url);
+      const cachedEntry = await getM3u8CacheEntry(cacheKey);
+
+      if(cachedEntry && !isM3u8CacheExpired(cachedEntry)) {
+
+        LOG.info("Using cached M3U8 link for %s", url);
+
+        return setupM3u8Proxy({
+          m3u8Url: cachedEntry.m3u8Url,
+          channelName: channel?.name ?? null,
+          metadataComment,
+          numericStreamId,
+          onCircuitBreak,
+          profile,
+          profileName,
+          providerName,
+          startTime,
+          streamId,
+          url,
+          requestHeaders: cachedEntry.headers
+        });
+      }
+
       LOG.info("M3U8 capture mode enabled for %s", url);
 
       const browser = await getCurrentBrowser();
@@ -831,6 +856,17 @@ export async function setupStream(options: StreamSetupOptions, onCircuitBreak: (
           await tempPage.close().catch(() => {});
         }
       }
+
+      const capturedAtMs = Date.now();
+      const expiresAt = computeM3u8ExpiresAt(m3u8Result.m3u8Url, capturedAtMs, channel?.m3u8TtlSeconds);
+
+      await setM3u8CacheEntry(cacheKey, {
+        capturedAt: new Date(capturedAtMs).toISOString(),
+        expiresAt,
+        headers: m3u8Result.requestHeaders,
+        m3u8Url: m3u8Result.m3u8Url,
+        sourceUrl: url
+      });
 
       return setupM3u8Proxy({
         m3u8Url: m3u8Result.m3u8Url,

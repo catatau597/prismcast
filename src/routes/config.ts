@@ -397,7 +397,7 @@ function generateProfileReference(profiles: ProfileInfo[]): string {
  * @returns Array of HTML strings for the advanced fields section.
  */
 function generateAdvancedFields(idPrefix: string, stationIdValue: string, channelSelectorValue: string, channelNumberValue: string,
-  useM3u8LinkValue = false, showHints = true): string[] {
+  useM3u8LinkValue = false, m3u8TtlSecondsValue = "", showHints = true): string[] {
 
   const lines: string[] = [];
 
@@ -414,6 +414,18 @@ function generateAdvancedFields(idPrefix: string, stationIdValue: string, channe
     "Use M3U8 Link",
     "Capture M3U8 stream URL instead of screen recording (lower CPU usage, better quality)",
     "useM3u8Link"
+  ));
+
+  const m3u8TtlHint = showHints ?
+    "Optional TTL (seconds) for cached M3U8 URL. Leave empty to auto-detect." :
+    undefined;
+
+  lines.push(...generateTextField(
+    idPrefix + "-m3u8TtlSeconds",
+    "m3u8TtlSeconds",
+    "M3U8 Cache TTL (seconds)",
+    m3u8TtlSecondsValue,
+    { hint: m3u8TtlHint, placeholder: showHints ? "e.g., 900" : undefined, type: "number" }
   ));
 
   // Station ID.
@@ -652,7 +664,8 @@ export function generateChannelRowHtml(key: string, profiles: ProfileInfo[]): Ch
 
     // Advanced fields.
     editLines.push(...generateAdvancedFields("edit-" + key, channel.stationId ?? "", channel.channelSelector ?? "",
-      channel.channelNumber ? String(channel.channelNumber) : "", channel.useM3u8Link ?? false));
+      channel.channelNumber ? String(channel.channelNumber) : "", channel.useM3u8Link ?? false,
+      channel.m3u8TtlSeconds ? String(channel.m3u8TtlSeconds) : ""));
 
     // Form buttons.
     editLines.push("<div class=\"form-buttons\">");
@@ -1505,7 +1518,8 @@ export function generateChannelsPanel(channelMessage?: string, channelError?: bo
 
   // Advanced fields (station ID, channel selector, channel number).
   lines.push(...generateAdvancedFields("add", formValues?.get("stationId") ?? "", formValues?.get("channelSelector") ?? "",
-    formValues?.get("channelNumber") ?? "", formValues?.get("useM3u8Link") === "true"));
+    formValues?.get("channelNumber") ?? "", formValues?.get("useM3u8Link") === "true",
+    formValues?.get("m3u8TtlSeconds") ?? ""));
 
   // Form buttons.
   lines.push("<div class=\"form-buttons\">");
@@ -2391,6 +2405,7 @@ export function setupConfigEndpoint(app: Express): void {
       const channelSelector = body.channelSelector?.trim() ?? "";
       const channelNumberStr = body.channelNumber?.trim() ?? "";
       const useM3u8LinkValue = body.useM3u8Link?.trim() ?? "false";
+      const m3u8TtlSecondsStr = body.m3u8TtlSeconds?.trim() ?? "";
       const useM3u8Link = useM3u8LinkValue === "true";
 
       // Validate channel number if provided.
@@ -2415,6 +2430,21 @@ export function setupConfigEndpoint(app: Express): void {
               break;
             }
           }
+        }
+      }
+
+      let m3u8TtlSeconds: number | undefined;
+
+      if(m3u8TtlSecondsStr) {
+
+        const ttlValue = parseInt(m3u8TtlSecondsStr, 10);
+
+        if(Number.isNaN(ttlValue) || (ttlValue <= 0)) {
+
+          formErrors.m3u8TtlSeconds = "M3U8 cache TTL must be a positive number of seconds.";
+        } else {
+
+          m3u8TtlSeconds = ttlValue;
         }
       }
 
@@ -2506,6 +2536,11 @@ export function setupConfigEndpoint(app: Express): void {
       }
 
       channel.useM3u8Link = useM3u8Link;
+
+      if(m3u8TtlSeconds !== undefined) {
+
+        channel.m3u8TtlSeconds = m3u8TtlSeconds;
+      }
 
       // Add or update the channel.
       result.channels[key as string] = channel;
